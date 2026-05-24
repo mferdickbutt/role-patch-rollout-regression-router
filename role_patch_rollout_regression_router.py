@@ -411,6 +411,56 @@ FIXTURES: List[Dict[str, Any]] = [
         },
         "expected_decision": Decision.REVIEWER_ESCALATION,
     },
+    {
+        "fixture_id": "FX-013-unrecognized-critical-flag",
+        "receipt": {
+            "case_id": "CASE-0463",
+            "role_id": "ROLE-scout",
+            "patch_id": "PATCH-k7l8m9",
+            "rollout_window": "2026-W21",
+            "declared_scope": ("scout",),
+            "actual_affected_roles": ("scout",),
+            "regression_flags": (
+                {
+                    "flag_type": "data_corruption",
+                    "severity": "critical",
+                    "scope_affected": ("scout",),
+                    "reviewer_safe_detail": "Unknown flag type: post-apply data integrity anomaly on scout role",
+                },
+            ),
+            "has_duplicate_scope": False,
+            "canary_valid": True,
+            "verification_pass": True,
+            "privacy_pass": True,
+            "reviewer_safe_severity": "critical",
+        },
+        "expected_decision": Decision.REVIEWER_ESCALATION,
+    },
+    {
+        "fixture_id": "FX-014-unrecognized-high-flag",
+        "receipt": {
+            "case_id": "CASE-0464",
+            "role_id": "ROLE-patrol",
+            "patch_id": "PATCH-n0o1p2",
+            "rollout_window": "2026-W21",
+            "declared_scope": ("patrol",),
+            "actual_affected_roles": ("patrol",),
+            "regression_flags": (
+                {
+                    "flag_type": "schema_mismatch",
+                    "severity": "high",
+                    "scope_affected": ("patrol",),
+                    "reviewer_safe_detail": "Unknown flag type: output schema drifted from expected template on patrol",
+                },
+            ),
+            "has_duplicate_scope": False,
+            "canary_valid": True,
+            "verification_pass": True,
+            "privacy_pass": True,
+            "reviewer_safe_severity": "high",
+        },
+        "expected_decision": Decision.REVIEWER_ESCALATION,
+    },
 ]
 
 
@@ -530,6 +580,11 @@ def _evaluate_single(receipt: RolloutReceipt) -> Tuple[Decision, List[str], str]
         candidates.append((Decision.MONITOR_PATCH, f"Elevated monitoring for {max_sev.value} severity flags"))
         reasons.append(f"monitor_{max_sev.value}_severity")
 
+    if not candidates and max_sev in (Severity.HIGH, Severity.CRITICAL):
+        candidates.append((Decision.REVIEWER_ESCALATION,
+            f"Unrecognized {max_sev.value} severity flag with no specific rollback match"))
+        reasons.append(f"unrecognized_{max_sev.value}_flag_escalation")
+
     if not candidates:
         candidates.append((Decision.KEEP_PATCH, "No regression flags; all checks pass"))
         reasons.append("all_checks_pass")
@@ -648,8 +703,8 @@ def run_assertions(
     checked += 1
     escalation_cases = [d for d in decisions if d.decision == "reviewer_escalation"]
     for esc in escalation_cases:
-        if esc.severity != "critical":
-            print(f"  FAIL {esc.case_id}: reviewer_escalation with non-critical severity={esc.severity}")
+        if esc.severity not in ("critical", "high"):
+            print(f"  FAIL {esc.case_id}: reviewer_escalation with unexpected severity={esc.severity}")
             all_pass = False
 
     checked += 1
@@ -672,6 +727,16 @@ def run_assertions(
         if kc.triggered_flags != ["all_checks_pass"]:
             print(f"  FAIL {kc.case_id}: keep_patch has unexpected triggers={kc.triggered_flags}")
             all_pass = False
+
+    checked += 1
+    unrecognized_cases = [d for d in decisions if any("unrecognized_" in t for t in d.triggered_flags)]
+    for uc in unrecognized_cases:
+        if uc.decision != "reviewer_escalation":
+            print(f"  FAIL {uc.case_id}: unrecognized flag escalation got={uc.decision}")
+            all_pass = False
+    if len(unrecognized_cases) != 2:
+        print(f"  FAIL unrecognized flag cases: expected 2 got={len(unrecognized_cases)}")
+        all_pass = False
 
     status = "PASS" if all_pass else "FAIL"
     print(f"\n  Embedded assertions: {checked} checked — {status}\n")
